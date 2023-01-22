@@ -11,3 +11,4 @@
 | Allow colors to be configured and manually changed   |   Y   |
 | Add a better selector button                         |   Y   |
 | Add the ability to select a model                    |   Y   |
+| Complete README                                      |       |

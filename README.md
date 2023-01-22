@@ -12,5 +12,8 @@ Provides all the same features as the original website, and more!:
 
 ## Visuals
 
+TODO - See the `assets` folder
+
 ## Controls
 
+TODO - read the code for now 
