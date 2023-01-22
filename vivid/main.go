@@ -20,10 +20,13 @@ var (
 
 type colorMsg struct{ result [5][3]int }
 type errMsg struct{ err error }
+type modelMsg struct{ result []string }
 
 func (e errMsg) Error() string { return e.err.Error() }
 
 type color_response struct{ Result [5][3]int }
+
+type model_response struct{ Result []string }
 
 type model struct {
 	tabContent [5][3]int
@@ -36,13 +39,51 @@ type model struct {
 	editing    bool
 	color_text [3]string
 	edit_tab   int
+	models     []string
+	model_loc  int
+	done_model bool
+	model_type string
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return getModels
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if !m.done_model {
+		switch msg := msg.(type) {
+		case modelMsg:
+			m.models = msg.result
+
+		case tea.WindowSizeMsg:
+			m.width, m.height = msg.Width, msg.Height
+
+		case tea.KeyMsg:
+			keypress := msg.String()
+			switch keypress {
+			case "ctrl+c", "esc", "q":
+				m.quitting = true
+				return m, tea.Quit
+			case "up", "w":
+				m.model_loc = wrap_move(m.model_loc, -1, len(m.models))
+				return m, nil
+			case "down", "s":
+				m.model_loc = wrap_move(m.model_loc, 1, len(m.models))
+				return m, nil
+			case "enter":
+				if len(m.models) > 0 {
+					m.model_type = m.models[m.model_loc]
+					m.done_model = true
+				}
+				return m, nil
+			}
+
+		case errMsg:
+			m.err = msg.err
+			return m, tea.Quit
+		}
+		return m, nil
+	}
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		keypress := msg.String()
@@ -51,8 +92,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "e":
-			m.editing = !m.editing
+			if m.done_model {
+				if !m.editing {
+					var temp [3]string
+					for i := 0; i < 3; i++ {
+						temp[i] = strconv.Itoa(m.tabContent[m.activeTab][i])
+					}
+					m.color_text = temp
+				}
+				m.editing = !m.editing
+			}
+		case "m":
+			if !m.editing {
+				m.done_model = false
+			}
 		}
+
 		if !m.editing {
 			switch keypress {
 			case "enter", " ":
@@ -73,7 +128,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tabContent[m.activeTab], m.tabContent[newIndex] = m.tabContent[newIndex], m.tabContent[m.activeTab]
 				return m, nil
 			case "r":
-				return m, getColors("default", m.tabContent, m.lockedTabs)
+				return m, getColors(m.model_type, m.tabContent, m.lockedTabs)
 			}
 		} else {
 			switch keypress {
@@ -136,6 +191,22 @@ func (m model) View() string {
 			prev_l = str_len
 		}
 		return small_colorbar + "\n" + readable_rgb + "\n"
+	}
+	if !m.done_model {
+		if len(m.models) == 0 {
+			return "Loading models..."
+		} else {
+			result := ""
+			for i := 0; i < len(m.models); i++ {
+				temp := " > "
+				temp += m.models[i]
+				if i == m.model_loc {
+					temp = termenv.Style{}.Foreground(term.Color("#56DE56")).Styled(temp)
+				}
+				result += temp + "\n"
+			}
+			return result + "\n"
+		}
 	}
 	if !m.editing {
 		colorbar := ""
@@ -285,6 +356,25 @@ func getColors(model string, prev [5][3]int, locks [5]bool) tea.Cmd {
 		}
 		return colorMsg{color_responseData.Result}
 	}
+}
+
+func getModels() tea.Msg {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, resp_err := client.Get("http://colormind.io/list/")
+	if resp_err != nil {
+		return errMsg{resp_err}
+	}
+	defer resp.Body.Close()
+	model_responseText, read_err := io.ReadAll(resp.Body)
+	if read_err != nil {
+		return errMsg{read_err}
+	}
+	model_responseData := model_response{}
+	json_err := json.Unmarshal(model_responseText, &model_responseData)
+	if json_err != nil {
+		return errMsg{json_err}
+	}
+	return modelMsg{model_responseData.Result}
 }
 
 func makeColorChar(c, c2 [3]int, ch string) string {
