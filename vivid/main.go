@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,9 @@ type model struct {
 	width      int
 	height     int
 	quitting   bool
+	editing    bool
+	color_text [3]string
+	edit_tab   int
 }
 
 func (m model) Init() tea.Cmd {
@@ -41,29 +45,63 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch keypress := msg.String(); keypress {
+		keypress := msg.String()
+		switch keypress {
 		case "ctrl+c", "esc", "q":
 			m.quitting = true
 			return m, tea.Quit
-		case "enter", " ":
-			m.lockedTabs[m.activeTab] = !m.lockedTabs[m.activeTab]
-			return m, nil
-		case "right", "s":
-			m.activeTab = wrap_move(m.activeTab, 1, len(m.tabContent))
-			return m, nil
-		case "left", "a":
-			m.activeTab = wrap_move(m.activeTab, -1, len(m.tabContent))
-			return m, nil
-		case "<", ",":
-			newIndex := wrap_move(m.activeTab, -1, len(m.tabContent))
-			m.tabContent[m.activeTab], m.tabContent[newIndex] = m.tabContent[newIndex], m.tabContent[m.activeTab]
-			return m, nil
-		case ">", ".":
-			newIndex := wrap_move(m.activeTab, 1, len(m.tabContent))
-			m.tabContent[m.activeTab], m.tabContent[newIndex] = m.tabContent[newIndex], m.tabContent[m.activeTab]
-			return m, nil
-		case "r":
-			return m, getColors("default", m.tabContent, m.lockedTabs)
+		case "e":
+			m.editing = !m.editing
+		}
+		if !m.editing {
+			switch keypress {
+			case "enter", " ":
+				m.lockedTabs[m.activeTab] = !m.lockedTabs[m.activeTab]
+				return m, nil
+			case "right", "d":
+				m.activeTab = wrap_move(m.activeTab, 1, len(m.tabContent))
+				return m, nil
+			case "left", "a":
+				m.activeTab = wrap_move(m.activeTab, -1, len(m.tabContent))
+				return m, nil
+			case "<", ",":
+				newIndex := wrap_move(m.activeTab, -1, len(m.tabContent))
+				m.tabContent[m.activeTab], m.tabContent[newIndex] = m.tabContent[newIndex], m.tabContent[m.activeTab]
+				return m, nil
+			case ">", ".":
+				newIndex := wrap_move(m.activeTab, 1, len(m.tabContent))
+				m.tabContent[m.activeTab], m.tabContent[newIndex] = m.tabContent[newIndex], m.tabContent[m.activeTab]
+				return m, nil
+			case "r":
+				return m, getColors("default", m.tabContent, m.lockedTabs)
+			}
+		} else {
+			switch keypress {
+			case "enter":
+				color, err := get_color(m.color_text)
+				if err != nil {
+					return m, nil
+				}
+				m.tabContent[m.activeTab] = color
+				m.editing = false
+				m.color_text = [3]string{"", "", ""}
+				return m, nil
+			case "up", "w":
+				m.edit_tab = wrap_move(m.edit_tab, -1, 3)
+				return m, nil
+			case "down", "s":
+				m.edit_tab = wrap_move(m.edit_tab, 1, 3)
+				return m, nil
+			case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0":
+				m.color_text[m.edit_tab] += keypress
+				return m, nil
+			case "backspace":
+				sz := len(m.color_text[m.edit_tab])
+				if sz > 0 {
+					m.color_text[m.edit_tab] = m.color_text[m.edit_tab][:sz-1]
+				}
+				return m, nil
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -99,66 +137,88 @@ func (m model) View() string {
 		}
 		return small_colorbar + "\n" + readable_rgb + "\n"
 	}
-	colorbar := ""
-	barWidth := max(m.width, len(m.tabContent)) / len(m.tabContent)
-	missingSquares := max(m.width, len(m.tabContent)) % len(m.tabContent)
-	barHeight := max(m.height, 1)
-	var tabWidth int
-	for j := 0; j < barHeight; j++ {
-		for i := 0; i < len(m.tabContent); i++ {
-			tabWidth = barWidth
-			if i == len(m.tabContent)/2 {
-				tabWidth += missingSquares
-			}
-			// ┌─┐
-			// │ │
-			// └─┘
-			if i == m.activeTab || m.lockedTabs[i] {
-				var lookup [3][3]string
-				if i == m.activeTab && m.lockedTabs[i] {
-					lookup = [3][3]string{
-						{"╔", "═", "╗"},
-						{"║", " ", "║"},
-						{"╚", "═", "╝"},
-					}
-				} else if m.lockedTabs[i] {
-					lookup = [3][3]string{
-						{"┌", "─", "┐"},
-						{"│", " ", "│"},
-						{"└", "─", "┘"},
-					}
-				} else {
-					lookup = [3][3]string{
-						{"┏", "━", "┓"},
-						{"┃", " ", "┃"},
-						{"┗", "━", "┛"},
-					}
+	if !m.editing {
+		colorbar := ""
+		barWidth := max(m.width, len(m.tabContent)) / len(m.tabContent)
+		missingSquares := max(m.width, len(m.tabContent)) % len(m.tabContent)
+		barHeight := max(m.height, 1)
+		var tabWidth int
+		for j := 0; j < barHeight; j++ {
+			for i := 0; i < len(m.tabContent); i++ {
+				tabWidth = barWidth
+				if i == len(m.tabContent)/2 {
+					tabWidth += missingSquares
 				}
-				ringColor := [3]int{255 - m.tabContent[i][0], 255 - m.tabContent[i][1], 255 - m.tabContent[i][2]}
-				if barHeight == 1 {
-					colorbar += makeColorChar(m.tabContent[i], ringColor, "│")
-				} else {
-					var nextChrs [3]string
-					if j == 1 {
-						nextChrs = lookup[0]
-					} else if j != barHeight-1 {
-						nextChrs = lookup[1]
+				// ┌─┐
+				// │ │
+				// └─┘
+				if i == m.activeTab || m.lockedTabs[i] {
+					var lookup [3][3]string
+					if i == m.activeTab && m.lockedTabs[i] {
+						lookup = [3][3]string{
+							{"╔", "═", "╗"},
+							{"║", " ", "║"},
+							{"╚", "═", "╝"},
+						}
+					} else if m.lockedTabs[i] {
+						lookup = [3][3]string{
+							{"┌", "─", "┐"},
+							{"│", " ", "│"},
+							{"└", "─", "┘"},
+						}
 					} else {
-						nextChrs = lookup[2]
+						lookup = [3][3]string{
+							{"┏", "━", "┓"},
+							{"┃", " ", "┃"},
+							{"┗", "━", "┛"},
+						}
 					}
-					colorbar += makeColorChar(m.tabContent[i], ringColor, nextChrs[0])
-					colorbar += strings.Repeat(makeColorChar(m.tabContent[i], ringColor, nextChrs[1]), tabWidth-2)
-					colorbar += makeColorChar(m.tabContent[i], ringColor, nextChrs[2])
+					ringColor := [3]int{255 - m.tabContent[i][0], 255 - m.tabContent[i][1], 255 - m.tabContent[i][2]}
+					if barHeight == 1 {
+						colorbar += makeColorChar(m.tabContent[i], ringColor, "│")
+					} else {
+						var nextChrs [3]string
+						if j == 1 {
+							nextChrs = lookup[0]
+						} else if j != barHeight-1 {
+							nextChrs = lookup[1]
+						} else {
+							nextChrs = lookup[2]
+						}
+						colorbar += makeColorChar(m.tabContent[i], ringColor, nextChrs[0])
+						colorbar += strings.Repeat(makeColorChar(m.tabContent[i], ringColor, nextChrs[1]), tabWidth-2)
+						colorbar += makeColorChar(m.tabContent[i], ringColor, nextChrs[2])
+					}
+				} else {
+					colorbar += strings.Repeat(makeColorChar(m.tabContent[i], [3]int{0, 0, 0}, " "), tabWidth)
 				}
-			} else {
-				colorbar += strings.Repeat(makeColorChar(m.tabContent[i], [3]int{0, 0, 0}, " "), tabWidth)
+
 			}
-
+			colorbar += "\n"
 		}
-		colorbar += "\n"
-	}
 
-	return colorbar
+		return colorbar
+	} else {
+		out := ""
+		color, err := get_color(m.color_text)
+		valid_color := err == nil
+		for i := 0; i < 3; i++ {
+			temp := " > "
+			temp += m.color_text[i]
+			if i == m.edit_tab {
+				temp = termenv.Style{}.Foreground(term.Color("#56DE56")).Styled(temp)
+				temp += " "
+				if valid_color {
+					temp += termenv.Style{}.Background(term.Color(fmt.Sprintf("#%02x%02x%02x", color[0], color[1], color[2]))).Styled(" ")
+				} else {
+					temp += "x"
+				}
+			}
+			out += temp
+			out += "\n"
+		}
+		return out + "\n"
+	}
 }
 
 func main() {
@@ -231,4 +291,16 @@ func makeColorChar(c, c2 [3]int, ch string) string {
 	return termenv.Style{}.Background(
 		term.Color(fmt.Sprintf("#%02x%02x%02x", c[0], c[1], c[2]))).Foreground(
 		term.Color(fmt.Sprintf("#%02x%02x%02x", c2[0], c2[1], c2[2]))).Styled(ch)
+}
+
+func get_color(col [3]string) ([3]int, error) {
+	var out [3]int
+	for i := 0; i < 3; i++ {
+		n, err := strconv.Atoi(col[i])
+		if err != nil || n > 255 || n < 0 {
+			return [3]int{0, 0, 0}, &strconv.NumError{}
+		}
+		out[i] = n
+	}
+	return out, nil
 }
