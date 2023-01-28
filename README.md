@@ -45,12 +45,21 @@ Exporting looks like:
 ## Controls
 
 Quit - CTRL+C, Q, or ESC
+
 Navigate selection/editing menu - W, Up Arrow, S, Down Arrow
+
 Select option while in menu - Enter 
+
 Reopen model selection - M
+
 Toggle editing for selected color - E
+
 Finish editing current color - Enter
+
 Lock current selected color - Enter or Space
+
 Move selected color - A, Left Arrow, D, Right Arrow
+
 Swap selected color with color next to it - <, Comma, >, Period
+
 Load new colors from API - R
